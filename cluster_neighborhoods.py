@@ -1,160 +1,190 @@
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
 from sklearn.cluster import DBSCAN, KMeans
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import folium
 
-# =========================
-# 1. Load data
-# =========================
-df = pd.read_csv('accessibility.csv')
+# load the files
+df = pd.read_csv("accessibility.csv")
 
 print("Initial data sample:")
 print(df.head())
 print("\nColumns:", df.columns.tolist())
 print("\nMissing values:\n", df.isna().sum())
 
-# =========================
-# 2. Rename columns
-# =========================
+# rename all columns for readability
 df = df.rename(columns={
-    'geometry/coordinates/0': 'longitude',
-    'geometry/coordinates/1': 'latitude',
-    'properties/label_type': 'label_type',
-    'properties/neighborhood': 'neighborhood',
-    'properties/severity': 'severity',
-    'properties/is_temporary': 'is_temporary'
+    "geometry/coordinates/0": "longitude",
+    "geometry/coordinates/1": "latitude",
+    "properties/label_type": "label_type",
+    "properties/neighborhood": "neighborhood",
+    "properties/severity": "severity",
+    "properties/is_temporary": "is_temporary"
 })
 
-# =========================
-# 3. Clean data
-# =========================
-df = df.dropna(subset=['longitude', 'latitude', 'neighborhood', 'severity'])
-df['severity_num'] = pd.to_numeric(df['severity'], errors='coerce')
-df['is_temporary_num'] = df['is_temporary'].astype(int)
-df = df.dropna(subset=['severity_num'])
+# clean data
+df = df.dropna(subset=["longitude", "latitude", "neighborhood", "severity"])
 
-# =========================
-# 4. One-hot encode issue types
-# =========================
-label_dummies = pd.get_dummies(df['label_type'], prefix='label')
-df = pd.concat([df, label_dummies], axis=1)
+df["severity_num"] = pd.to_numeric(df["severity"], errors="coerce")
 
-# =========================
-# 5. DBSCAN clustering (issue-level)
-# =========================
-feature_cols = ['longitude', 'latitude', 'severity_num', 'is_temporary_num'] + list(label_dummies.columns)
-X = df[feature_cols]
+# boolean handling
+df["is_temporary_num"] = (
+    df["is_temporary"]
+    .fillna(0)
+    .astype(bool)
+    .astype(int)
+)
 
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+df = df.dropna(subset=["severity_num"])
 
-dbscan = DBSCAN(eps=0.7, min_samples=5)
-df['issue_cluster'] = dbscan.fit_predict(X_scaled)
+# DBSCAN clustering of spatial data
+spatial_X = df[["longitude", "latitude"]]
+
+spatial_scaler = StandardScaler()
+spatial_scaled = spatial_scaler.fit_transform(spatial_X)
+
+dbscan = DBSCAN(eps=0.5, min_samples=10)
+df["issue_cluster"] = dbscan.fit_predict(spatial_scaled)
 
 print("\nIssue Cluster Counts:")
-print(df['issue_cluster'].value_counts())
+print(df["issue_cluster"].value_counts())
 
-# =========================
-# 6. Aggregate by neighborhood
-# =========================
+# safety check for DBSCAN results
+clustered_points = (df["issue_cluster"] != -1).sum()
+if clustered_points < 10:
+    raise ValueError(
+        "DBSCAN produced too few clustered points. "
+        "Increase eps or reduce min_samples."
+    )
+
+# aggregate to neighborhood level
 neighborhood_df = (
-    df[df['issue_cluster'] != -1]  # ignore noise
-    .groupby('neighborhood')
+    df[df["issue_cluster"] != -1]
+    .groupby("neighborhood")
     .agg(
-        issue_count=('issue_cluster', 'count'),
-        cluster_count=('issue_cluster', 'nunique'),
-        avg_severity=('severity_num', 'mean'),
-        temp_issue_ratio=('is_temporary_num', 'mean')
+        issue_count=("issue_cluster", "count"),
+        cluster_count=("issue_cluster", "nunique"),
+        avg_severity=("severity_num", "mean"),
+        temp_issue_ratio=("is_temporary_num", "mean")
     )
     .reset_index()
 )
 
-# =========================
-# 7. Neighborhood clustering with KMeans
-# =========================
-neigh_features = neighborhood_df[['issue_count', 'cluster_count', 'avg_severity', 'temp_issue_ratio']]
-scaler2 = StandardScaler()
-neigh_scaled = scaler2.fit_transform(neigh_features)
+print("\nNeighborhood-level data:")
+print(neighborhood_df.head())
 
-kmeans = KMeans(n_clusters=4, random_state=42)
-neighborhood_df['neighborhood_cluster'] = kmeans.fit_predict(neigh_scaled)
+# neighborhood features
+neigh_features = neighborhood_df[
+    ["issue_count", "cluster_count", "avg_severity", "temp_issue_ratio"]
+]
 
-# Optional: label clusters descriptively
-def label_cluster(row):
-    if row['avg_severity'] > 3 and row['issue_count'] > 3000:
-        return "High issues, high severity"
-    elif row['avg_severity'] <= 3 and row['temp_issue_ratio'] > 0.02:
-        return "Low severity, mostly temporary"
-    elif row['issue_count'] < 500:
-        return "Few issues"
+neigh_scaler = StandardScaler()
+neigh_scaled = neigh_scaler.fit_transform(neigh_features)
+
+# find optimal K
+inertias = []
+sil_scores = []
+K = range(2, min(9, len(neighborhood_df)))
+
+for k in K:
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    labels = km.fit_predict(neigh_scaled)
+    inertias.append(km.inertia_)
+
+    if len(set(labels)) > 1:
+        sil_scores.append(silhouette_score(neigh_scaled, labels))
     else:
-        return "Medium issues"
+        sil_scores.append(-1)
 
-neighborhood_df['cluster_label'] = neighborhood_df.apply(label_cluster, axis=1)
+plt.figure()
+plt.plot(list(K), inertias, marker="o")
+plt.xlabel("k")
+plt.ylabel("Inertia")
+plt.title("Elbow Method")
+plt.show()
 
-# =========================
-# 8. Summary
-# =========================
-summary = neighborhood_df.groupby('neighborhood_cluster')[['issue_count','cluster_count','avg_severity','temp_issue_ratio']].mean()
-print("\nNeighborhood Cluster Summary:")
-print(summary)
+plt.figure()
+plt.plot(list(K), sil_scores, marker="o")
+plt.xlabel("k")
+plt.ylabel("Silhouette Score")
+plt.title("Silhouette Analysis")
+plt.show()
 
-# =========================
-# 9. Save CSVs
-# =========================
+k_opt = list(K)[sil_scores.index(max(sil_scores))]
+print("Optimal number of clusters:", k_opt)
+
+# KMeans clustering
+kmeans = KMeans(n_clusters=k_opt, random_state=42, n_init=10)
+neighborhood_df["neighborhood_cluster"] = kmeans.fit_predict(neigh_scaled)
+
+# interpret clusters
+cluster_profiles = (
+    neighborhood_df
+    .groupby("neighborhood_cluster")[[
+        "issue_count", "cluster_count", "avg_severity", "temp_issue_ratio"
+    ]]
+    .mean()
+)
+
+print("\nCluster Profiles:")
+print(cluster_profiles)
+
+neighborhood_df["cluster_label"] = (
+    "Cluster " + neighborhood_df["neighborhood_cluster"].astype(str)
+)
+
+# save outputs
 df.to_csv("issues_clustered.csv", index=False)
 neighborhood_df.to_csv("neighborhoods_clustered.csv", index=False)
 
-# =========================
-# 10. Map visualization (Seattle)
-# =========================
-# Load neighborhood boundaries (GeoJSON)
+# map visualization
 neighborhood_shapes = gpd.read_file("seattle_neighborhoods.geojson")
-
-# Check the neighborhood column in your GeoJSON
 print("GeoJSON columns:", neighborhood_shapes.columns)
 
-# Replace 'name' below with the correct column name from your GeoJSON
-geo_col_name = 'S_HOOD'  # <- update this if needed
+geo_col_name = "S_HOOD"  # update if needed
+
+# normalize names to avoid merge failures
+neighborhood_shapes[geo_col_name] = (
+    neighborhood_shapes[geo_col_name].str.strip().str.lower()
+)
+neighborhood_df["neighborhood"] = (
+    neighborhood_df["neighborhood"].str.strip().str.lower()
+)
+
 choropleth_df = neighborhood_shapes.merge(
     neighborhood_df,
     left_on=geo_col_name,
-    right_on='neighborhood',
-    how='left'
+    right_on="neighborhood",
+    how="left"
 )
 
-# Fill NaN clusters with -1
-choropleth_df['neighborhood_cluster'] = choropleth_df['neighborhood_cluster'].fillna(-1)
+choropleth_df["neighborhood_cluster"] = (
+    choropleth_df["neighborhood_cluster"].fillna(-1)
+)
 
-# Create a folium map centered on Seattle
 seattle_map = folium.Map(location=[47.6062, -122.3321], zoom_start=11)
 
-# Add choropleth layer
 folium.Choropleth(
     geo_data=choropleth_df,
-    name="Accessibility Clusters",
     data=choropleth_df,
-    columns=[geo_col_name, 'neighborhood_cluster'],
+    columns=[geo_col_name, "neighborhood_cluster"],
     key_on=f"feature.properties.{geo_col_name}",
     fill_color="YlOrRd",
     fill_opacity=0.7,
     line_opacity=0.3,
-    legend_name="Accessibility Neighborhood Cluster"
+    legend_name="Accessibility Neighborhood Clusters"
 ).add_to(seattle_map)
 
-# Add hover tooltips
-folium.features.GeoJson(
+folium.GeoJson(
     choropleth_df,
-    name="Neighborhoods",
     tooltip=folium.features.GeoJsonTooltip(
         fields=[geo_col_name, "cluster_label", "issue_count", "avg_severity"],
-        aliases=["Neighborhood","Cluster","Issue Count","Avg Severity"],
+        aliases=["Neighborhood", "Cluster", "Issue Count", "Avg Severity"],
         localize=True
     )
 ).add_to(seattle_map)
 
-# Save map
 seattle_map.save("seattle_accessibility_map.html")
 print("Map saved: seattle_accessibility_map.html")
