@@ -1,13 +1,26 @@
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import silhouette_score
-from sklearn.metrics import mean_absolute_percentage_error
-from sklearn.cluster import DBSCAN, KMeans
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import folium
 
-# load the files
+# sci-kit preprocessing and clustering
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import DBSCAN, KMeans
+
+# sci-kit learn metrics
+from sklearn.metrics import (
+    silhouette_score, 
+    mean_absolute_percentage_error, 
+    mean_squared_error, 
+    r2_score, 
+    mean_absolute_error
+)
+
+# sci-kit learn modeling
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+
+# load the data files
 df = pd.read_csv("accessibility.csv")
 
 print("Initial data sample:")
@@ -15,7 +28,7 @@ print(df.head())
 print("\nColumns:", df.columns.tolist())
 print("\nMissing values:\n", df.isna().sum())
 
-# rename all columns for readability
+# rename all columns for human readability
 df = df.rename(columns={
     "geometry/coordinates/0": "longitude",
     "geometry/coordinates/1": "latitude",
@@ -185,10 +198,6 @@ neighborhood_df["main_issue_type"] = neighborhood_df["main_issue_type"].fillna("
 
 
 # predictive modeling: severity prediction
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-
 print("\n" + "="*50)
 print("PREDICTIVE MODELING: SEVERITY PREDICTION")
 print("="*50)
