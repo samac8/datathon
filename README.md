@@ -46,7 +46,21 @@ Generates color-coded accessibility maps where:
 - **Machine Learning:** scikit-learn (DBSCAN, K-Means, Random Forest, StandardScaler)
 - **Visualization:** matplotlib, folium
 
+---
+
 ## Model Performance:
+
+#### Evaluation Metrics
+
+Our Random Forest model demonstrates high stability and predictive power, as evidenced by the minimal gap between training and testing performance.
+
+| Metric | Value | Description |
+| :--- | :--- | :--- |
+| **Model Accuracy (MAPE)** | **73.85%** | Average proximity of predictions to actual values. |
+| **Margin of Error (MAE)** | **0.5455** | Average absolute deviation in score units. |
+| **Test $R²$ Score** | **0.7014** | Explains ~70% of the variance in neighborhood accessibility. |
+| **Test RMSE** | **0.7200** | Root Mean Square Error; sensitive to larger outliers. |
+
 
 #### Elbow Method Analysis
 ![Elbow Method](elbow_method.png)
@@ -72,11 +86,6 @@ This chart reveals which factors most strongly predict accessibility issue sever
 - **Neighborhood context** (average severity nearby, issue density) often dominates
 - **Geographic location** (latitude/longitude) captures spatial patterns
 - **Issue type** (SurfaceProblem vs. CurbRamp) affects severity differently
-
-#### Model Metrics
-- **R² Score**: Measures how well the model fits the data (closer to 1 = better)
-- **RMSE**: Average prediction error in severity units
-- **MAE**: Mean absolute error across all predictions
 
 ---
 
