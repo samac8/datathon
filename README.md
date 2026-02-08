@@ -37,9 +37,9 @@ Predicts severity of accessibility issues using:
 
 ### 4. Interactive Visualization & Gradient
 Generates color-coded accessibility maps where:
-- 🟢 **Green** = Most accessible (safest, fewest issues)
-- 🟡 **Yellow** = Moderate accessibility
-- 🔴 **Red** = Least accessible (most dangerous, highest issue concentration)
+- 🟢 = Most accessible (safest, fewest issues)
+- 🟡 = Moderate accessibility
+- 🔴 = Least accessible (most dangerous, highest issue concentration)
 
 ## Core Technologies:
 - **Data Processing:** pandas, geopandas
@@ -104,6 +104,7 @@ This chart reveals which factors most strongly predict accessibility issue sever
    - Open `seattle_accessibility_map.html` in a web browser for interactive exploration
    - Review PNG files for model diagnostics
    - Analyze CSV files for detailed results
+     
 ## Project Structure
 
 ```
