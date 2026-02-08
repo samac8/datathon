@@ -109,7 +109,7 @@ plt.xlabel("k")
 plt.ylabel("Inertia")
 plt.title("Elbow Method")
 plt.savefig("elbow_method.png", dpi=150, bbox_inches='tight')
-plt.close()  # Close the figure instead of showing it
+plt.close()
 
 plt.figure()
 plt.plot(list(K), sil_scores, marker="o")
@@ -117,7 +117,7 @@ plt.xlabel("k")
 plt.ylabel("Silhouette Score")
 plt.title("Silhouette Analysis")
 plt.savefig("silhouette_analysis.png", dpi=150, bbox_inches='tight')
-plt.close()  # Close the figure instead of showing it
+plt.close()
 
 k_opt = list(K)[sil_scores.index(max(sil_scores))]
 print("Optimal number of clusters:", k_opt)
@@ -192,26 +192,26 @@ print("\n" + "="*50)
 print("PREDICTIVE MODELING: SEVERITY PREDICTION")
 print("="*50)
 
-# Feature engineering - add spatial context
+# add spatial context
 df['issues_in_neighborhood'] = df.groupby('neighborhood')['severity_num'].transform('count')
 df['avg_severity_in_neighborhood'] = df.groupby('neighborhood')['severity_num'].transform('mean')
 
-# One-hot encode label_type (issue type)
+# one-hot encode label_type
 df_model = df.copy()
 df_model = pd.get_dummies(df_model, columns=['label_type'], prefix='type', drop_first=False)
 
-# Select features for prediction
+# select features for prediction
 feature_cols = ['longitude', 'latitude', 'is_temporary_num', 
                 'issues_in_neighborhood', 'avg_severity_in_neighborhood']
-# Add all the one-hot encoded type columns
+# add all the one-hot encoded type columns
 type_cols = [col for col in df_model.columns if col.startswith('type_')]
 feature_cols.extend(type_cols)
 
-# Prepare data
+# prepare data
 X = df_model[feature_cols].fillna(0)
 y = df_model['severity_num']
 
-# Train/test split (80/20)
+# train/test split (80/20)
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=None
 )
@@ -219,7 +219,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 print(f"\nTraining set size: {len(X_train)}")
 print(f"Test set size: {len(X_test)}")
 
-# Train Random Forest model
+# train Random Forest model
 rf_model = RandomForestRegressor(
     n_estimators=100, 
     max_depth=10,
@@ -230,11 +230,11 @@ rf_model = RandomForestRegressor(
 
 rf_model.fit(X_train, y_train)
 
-# Make predictions
+# predict
 y_pred_train = rf_model.predict(X_train)
 y_pred_test = rf_model.predict(X_test)
 
-# Evaluate model
+# evaluate model
 train_r2 = r2_score(y_train, y_pred_train)
 test_r2 = r2_score(y_test, y_pred_test)
 train_rmse = mean_squared_error(y_train, y_pred_train) ** 0.5
@@ -248,7 +248,7 @@ print(f"Training RMSE: {train_rmse:.4f}")
 print(f"Test RMSE: {test_rmse:.4f}")
 print(f"Test MAE: {test_mae:.4f}")
 
-# Feature importance
+# feature importance
 importance_df = pd.DataFrame({
     'feature': feature_cols,
     'importance': rf_model.feature_importances_
@@ -257,7 +257,7 @@ importance_df = pd.DataFrame({
 print("\n--- Top 10 Most Important Features ---")
 print(importance_df.head(10).to_string(index=False))
 
-# Save feature importance plot
+# save feature importance plot
 plt.figure(figsize=(10, 6))
 top_features = importance_df.head(15)
 plt.barh(range(len(top_features)), top_features['importance'])
@@ -269,11 +269,11 @@ plt.tight_layout()
 plt.savefig("feature_importance.png", dpi=150, bbox_inches='tight')
 plt.close()
 
-# Add predictions to original dataframe
+# add predictions to original dataframe
 df_model['predicted_severity'] = rf_model.predict(X)
 df_model['prediction_error'] = abs(df_model['severity_num'] - df_model['predicted_severity'])
 
-# Save model results
+# save model results
 model_results = df_model[['longitude', 'latitude', 'neighborhood', 'severity_num', 
                           'predicted_severity', 'prediction_error']].copy()
 model_results.to_csv("severity_predictions.csv", index=False)
@@ -318,22 +318,82 @@ choropleth_df = neighborhood_shapes.merge(
 # for areas with no data, set to NaN (will appear without color)
 choropleth_df["accessibility_score"] = choropleth_df["accessibility_score"].fillna(float('nan'))
 
+# color in the predicted areas
+# identify neighborhoods with no data
+all_hoods = set(neighborhood_shapes[geo_col_name].unique())
+data_hoods = set(neighborhood_df["neighborhood"].unique())
+missing_hoods = list(all_hoods - data_hoods)
+
+# create "synthetic" data for missing neighborhoods to run through the model
+# use the centroid of the neighborhood to get lat/long for the prediction
+prediction_records = []
+for hood in missing_hoods:
+    geom = neighborhood_shapes[neighborhood_shapes[geo_col_name] == hood].geometry.iloc[0]
+    centroid = geom.centroid
+    
+    # created a feature row matching X_train columns
+    # assume 0 existing issues for the 'neighborhood context' features
+    row = {col: 0 for col in feature_cols}
+    row['longitude'] = centroid.x
+    row['latitude'] = centroid.y
+    # assume a generic 'type' (e.g., the most common type from your training data)
+    
+    pred_severity = rf_model.predict(pd.DataFrame([row]))[0]
+    
+    # calculate predicted accessibility score
+    pred_score = (0 * 0.4) + (0 * 0.2) + (pred_severity * 0.3) + (0 * 0.1)
+    
+    prediction_records.append({
+        "neighborhood": hood,
+        "accessibility_score": pred_score,
+        "is_predicted": "PREDICTION (Modeled Estimation)"
+    })
+
+predict_df = pd.DataFrame(prediction_records)
+
+# merge with the GeoJSON for a secondary layer
+predicted_choropleth = neighborhood_shapes.merge(
+    predict_df, left_on=geo_col_name, right_on="neighborhood", how="inner"
+)
+
 seattle_map = folium.Map(location=[47.6062, -122.3321], zoom_start=11)
 
-# Use RdYlGn_r (reversed Red-Yellow-Green) so that:
-# - Red = high accessibility_score = many issues = LEAST accessible
-# - Green = low accessibility_score = few issues = MOST accessible
+folium.Choropleth(
+    geo_data=predicted_choropleth,
+    data=predicted_choropleth,
+    columns=[geo_col_name, "accessibility_score"],
+    key_on=f"feature.properties.{geo_col_name}",
+    fill_color="RdYlGn_r", 
+    fill_opacity=0.35,
+    line_opacity=0.8,
+    line_dash='5,5',
+    legend_name="Predicted Accessibility Score (Est.)"
+).add_to(seattle_map)
+
+folium.GeoJson(
+    predicted_choropleth,
+    style_function=lambda x: {'fillOpacity': 0, 'color': 'gray', 'weight': 1},
+    tooltip=folium.features.GeoJsonTooltip(
+        fields=[geo_col_name, "is_predicted", "accessibility_score"],
+        aliases=["PREDICTION", "Data Status:", "Estimated Score:"],
+        localize=True
+    )
+).add_to(seattle_map)
+
+# reversed Red-Yellow-Green:
+# red = high accessibility_score = many issues = LEAST accessible
+# green = low accessibility_score = few issues = MOST accessible
 folium.Choropleth(
     geo_data=choropleth_df,
     data=choropleth_df,
     columns=[geo_col_name, "accessibility_score"],
     key_on=f"feature.properties.{geo_col_name}",
-    fill_color="RdYlGn_r",  # Reversed: Red (bad) to Yellow to Green (good)
-    fill_opacity=0.7,
-    line_opacity=0,  # Hide choropleth borders, we'll add them manually
-    nan_fill_color="white",  # Areas with no data appear white
-    nan_fill_opacity=0.0,  # Make areas with no data fully transparent
-    legend_name="Accessibility Score (Red=Least Accessible, Green=Most Accessible)"
+    fill_color="RdYlGn_r",  # red (bad) to green (good)
+    fill_opacity=0.75,
+    line_opacity=0,
+    nan_fill_color="white",
+    nan_fill_opacity=0.0, 
+    legend_name="Actual Accessibility Score (Reported Data)"
 ).add_to(seattle_map)
 
 choropleth_with_data = choropleth_df[choropleth_df['accessibility_score'].notna()]
